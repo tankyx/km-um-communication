@@ -9,5 +9,6 @@
     <ClInclude Include="undocumented_structs.h" />
     <ClInclude Include="dependencies.h" />
     <ClInclude Include="loop.h" />
+    <ClInclude Include="skCrypter.h" />
   </ItemGroup>
 </Project>

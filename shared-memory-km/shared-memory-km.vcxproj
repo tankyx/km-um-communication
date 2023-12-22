@@ -145,6 +145,14 @@
       <TreatWarningAsError>false</TreatWarningAsError>
     </ClCompile>
   </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+    <DriverSign>
+      <FileDigestAlgorithm>SHA256</FileDigestAlgorithm>
+    </DriverSign>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
@@ -155,6 +163,7 @@
     <ClInclude Include="dependencies.h" />
     <ClInclude Include="loop.h" />
     <ClInclude Include="main.h" />
+    <ClInclude Include="skCrypter.h" />
     <ClInclude Include="Structs.h" />
     <ClInclude Include="undocumented_structs.h" />
   </ItemGroup>

@@ -3,6 +3,7 @@
 #include "loop.h"
 #include "undocumented_structs.h"
 #include "Structs.h"
+#include "skCrypter.h"
 
 VOID ReadSharedMemory
 (
@@ -590,7 +591,105 @@ BOOLEAN LocatePiDDB(PERESOURCE* lock, PRTL_AVL_TABLE* table)
 	return TRUE;
 }
 
+PVOID get_system_module_base(const char* module_name)
+{
+	ULONG bytes = 0;
+	NTSTATUS status = ZwQuerySystemInformation(SystemModuleInformation, NULL, bytes, &bytes);
+
+	if (!bytes)
+		return NULL;
+
+	PRTL_PROCESS_MODULES modules = (PRTL_PROCESS_MODULES)ExAllocatePoolWithTag(NonPagedPool, bytes, 0x4e554c4c);
+
+	status = ZwQuerySystemInformation(SystemModuleInformation, modules, bytes, &bytes);
+
+	if (!NT_SUCCESS(status))
+		return NULL;
+
+	PRTL_PROCESS_MODULE_INFORMATION module = modules->Modules;
+	PVOID module_base = 0, module_size = 0;
+
+	for (ULONG i = 0; i < modules->NumberOfModules; i++) {
+		if (strcmp((char*)module[i].FullPathName, module_name) == NULL) {
+			module_base = module[i].ImageBase;
+			module_size = (PVOID)module[i].ImageSize;
+			break;
+		}
+	}
+
+	if (0 == 0) {
+		PEPROCESS process1;
+	}
+
+	if (modules)
+		ExFreePoolWithTag(modules, NULL);
+
+	if (module_base <= NULL)
+		return NULL;
+
+	return module_base;
+}
+
+void SpoofAddress(void* address, void** save, void* target) {
+	*save = *(void**)(address); // Save current stuff
+
+	*(void**)(address) = target; // Overwrite
+}
+
+VOID HideThread() {
+	char path[] = "\\SystemRoot\\system32\\ntoskrnl.exe";
+	skCrypter myCrypter;
+	init_skCrypter(&myCrypter, path, sizeof(path), __TIME__[4], __TIME__[7]);
+	char* path_encrypted = encrypt(&myCrypter);
+	PVOID ntoskrnlbase = (PVOID)((ULONG64)get_system_module_base(path_encrypted) + 0x23810a);
+	PVOID Kthread = (PVOID)(KeGetCurrentThread());
+
+	PVOID InitialStack = (PVOID)((ULONG64)Kthread + GInitialStack);
+	PVOID VCreateTime = (PVOID)((ULONG64)Kthread + GVCreateTime);
+	PVOID StartAddress = (PVOID)((ULONG64)Kthread + GStartAddress);
+	PVOID Win32StartAddress = (PVOID)((ULONG64)Kthread + GWin32StartAddress);
+	PVOID KernelStack = (PVOID)((ULONG64)Kthread + GKernelStack);
+	PVOID CID = (PVOID)((ULONG64)Kthread + GCID);
+	PVOID ExitStatus = (PVOID)((ULONG64)Kthread + GExitStatus);
+
+	SpoofAddress(VCreateTime, &_VCreateTime, (PVOID)2147483247);
+	SpoofAddress(StartAddress, &_StartAddress, ntoskrnlbase);
+	SpoofAddress(Win32StartAddress, &_Win32StartAddress, ntoskrnlbase);
+	SpoofAddress(KernelStack, &_KernelStack, (PVOID)0x0);
+	SpoofAddress(CID, &_CID, (PVOID)0x0);
+	SpoofAddress(ExitStatus, &_ExitStatus, (PVOID)STATUS_SUCCESS);
+}
+
 VOID DriverLoop() {
+	OSVERSIONINFOW osver = { 0 };
+	osver.dwOSVersionInfoSize = sizeof(OSVERSIONINFOW);
+	RtlGetVersion(&osver);
+
+	if (osver.dwBuildNumber > 19000) {
+		GInitialStack = InitialStack_UP;
+		GVCreateTime = VCreateTime_UP;
+		GStartAddress = StartAddress_UP;
+		GWin32StartAddress = Win32StartAddress_UP;
+		GImageFileName = ImageFileName_UP;
+		GActiveThreads = ActiveThreads_UP;
+		GActiveProcessLinks = ActiveProcessLinks_UP;
+		GKernelStack = KernelStack_UP;
+		GExitStatus = ExitStatus_UP;
+		GCID = CID_UP;
+	} else {
+		GInitialStack = InitialStack_1909;
+		GVCreateTime = VCreateTime_1909;
+		GStartAddress = StartAddress_1909;
+		GWin32StartAddress = Win32StartAddress_1909;
+		GImageFileName = ImageFileName_1909;
+		GActiveThreads = ActiveThreads_1909;
+		GActiveProcessLinks = ActiveProcessLinks_1909;
+		GKernelStack = KernelStack_1909;
+		GExitStatus = ExitStatus_1909;
+		GCID = CID_1909;
+	}
+
+	HideThread();
 
 	while (TRUE)
 	{
@@ -879,21 +978,25 @@ VOID OpenEvents() {
 
 NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject, IN PUNICODE_STRING pRegistryPath) {
 	NTSTATUS status = STATUS_SUCCESS;
+	HANDLE hThread = NULL;
+	OBJECT_ATTRIBUTES object_attributes;
+
+	InitializeObjectAttributes(&object_attributes, NULL, OBJ_KERNEL_HANDLE, NULL, NULL);
 	UNREFERENCED_PARAMETER(pRegistryPath);
 
 	DbgPrintEx(0, 0, "Driver loaded !!\n");
-
 	pDriverObject->DriverUnload = DriverUnload;
-
 	CreateSharedMemory();
-
 	OpenEvents();
+	status = PsCreateSystemThread(&hThread, 0, &object_attributes, NULL, NULL, (PKSTART_ROUTINE)(&DriverLoop), NULL);
 
-	DriverLoop();
+	if (NT_SUCCESS(status)) {
+		// Close the handle as we won't use it
+		ZwClose(hThread);
+	}
 
 	DbgPrintEx(0, 0, "driver entry completed!\n");
-
-	return STATUS_SUCCESS;
+	return status;
 }
 
 VOID DriverUnload(IN PDRIVER_OBJECT pDriverObject) {
